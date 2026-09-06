@@ -1,0 +1,68 @@
+# A copier dans le repo a publier, sous .github/workflows/publish-pages.yml
+#
+# Prerequis, une seule fois par repo :
+#   1. ./scripts/gen-challenge.sh <votre-host>
+#   2. creer l'enregistrement TXT _git-pages-challenge.<votre-host> dans la zone OVH
+#   3. deposer le token dans les secrets du repo, sous le nom PAGES_TOKEN
+#
+# Le token n'autorise que SON hostname : inutile de le cloisonner autrement.
+
+name: Publier sur git-pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: publish-pages
+  cancel-in-progress: true
+
+env:
+  SITE_HOST: ghpages-proxy.incubateur.ademe.fr
+  # Repertoire contenant le site a publier. "." pour la racine du repo.
+  SITE_DIR: .
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Etape de build : a decommenter pour un site genere (Vite, Astro, Docusaurus...).
+      # Penser a pointer SITE_DIR sur le repertoire de sortie (dist, build, _site...).
+      # - uses: actions/setup-node@v6
+      #   with:
+      #     node-version: 22
+      #     cache: npm
+      # - run: npm ci && npm run build
+
+      - name: Construire l'archive
+        run: |
+          tar -czf /tmp/site.tar.gz \
+            --exclude=./.git \
+            --exclude=./.github \
+            --exclude=./CNAME \
+            -C "${SITE_DIR}" .
+          echo "Taille : $(du -h /tmp/site.tar.gz | cut -f1)"
+
+      # Valide le challenge DNS sans rien ecrire. Fait echouer le job tot et
+      # avec un message clair si le TXT est absent ou le token faux.
+      - name: Verifier l'autorisation (dry run)
+        run: |
+          curl -sS --fail-with-body -X PUT \
+            -H "Authorization: Pages ${{ secrets.PAGES_TOKEN }}" \
+            -H "Content-Type: application/x-tar+gzip" \
+            -H "Dry-Run: yes" \
+            --data-binary @/tmp/site.tar.gz \
+            "https://${SITE_HOST}/"
+
+      - name: Publier
+        run: |
+          curl -sS --fail-with-body -X PUT \
+            -H "Authorization: Pages ${{ secrets.PAGES_TOKEN }}" \
+            -H "Content-Type: application/x-tar+gzip" \
+            --data-binary @/tmp/site.tar.gz \
+            "https://${SITE_HOST}/"
+          echo
+          echo "Publie sur https://${SITE_HOST}/"
